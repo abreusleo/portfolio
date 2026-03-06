@@ -906,16 +906,11 @@ camera.position.set(0, 1.8, 2.5)
 scene.add(camera)
 
 // ---------------------------------------------------------------------
-// Fly Controls
+// Controls
 // ---------------------------------------------------------------------
-const controls = new PointerLockControls(camera, canvas)
-scene.add(controls.object)
+const isMobile = 'ontouchstart' in window && window.innerWidth < 1024
 
 const instructions = document.getElementById('instructions')
-
-instructions.addEventListener('click', () => controls.lock())
-controls.addEventListener('lock', () => instructions.classList.add('hidden'))
-controls.addEventListener('unlock', () => instructions.classList.remove('hidden'))
 
 const moveState = {
     forward: false,
@@ -932,31 +927,182 @@ controlsFolder.add(debugObject, 'flySpeed').min(0.5).max(10).step(0.5).name('Fly
 
 const velocity = new THREE.Vector3()
 
-document.addEventListener('keydown', (e) =>
-{
-    switch (e.code)
-    {
-        case 'KeyW': case 'ArrowUp':    moveState.forward = true; break
-        case 'KeyS': case 'ArrowDown':  moveState.backward = true; break
-        case 'KeyA': case 'ArrowLeft':  moveState.left = true; break
-        case 'KeyD': case 'ArrowRight': moveState.right = true; break
-        case 'Space':                   moveState.up = true; break
-        case 'ShiftLeft': case 'ShiftRight': moveState.down = true; break
-    }
-})
+// -- Mobile touch state --
+let mobileActive = false
+const mobileLook = { yaw: 0, pitch: 0 }
+let joystickDirX = 0
+let joystickDirZ = 0
 
-document.addEventListener('keyup', (e) =>
+let controls = null
+
+if (!isMobile)
 {
-    switch (e.code)
+    // ---- Desktop: PointerLockControls ----
+    controls = new PointerLockControls(camera, canvas)
+    scene.add(controls.object)
+
+    instructions.addEventListener('click', () => controls.lock())
+    controls.addEventListener('lock', () => instructions.classList.add('hidden'))
+    controls.addEventListener('unlock', () => instructions.classList.remove('hidden'))
+
+    document.addEventListener('keydown', (e) =>
     {
-        case 'KeyW': case 'ArrowUp':    moveState.forward = false; break
-        case 'KeyS': case 'ArrowDown':  moveState.backward = false; break
-        case 'KeyA': case 'ArrowLeft':  moveState.left = false; break
-        case 'KeyD': case 'ArrowRight': moveState.right = false; break
-        case 'Space':                   moveState.up = false; break
-        case 'ShiftLeft': case 'ShiftRight': moveState.down = false; break
+        switch (e.code)
+        {
+            case 'KeyW': case 'ArrowUp':    moveState.forward = true; break
+            case 'KeyS': case 'ArrowDown':  moveState.backward = true; break
+            case 'KeyA': case 'ArrowLeft':  moveState.left = true; break
+            case 'KeyD': case 'ArrowRight': moveState.right = true; break
+            case 'Space':                   moveState.up = true; break
+            case 'ShiftLeft': case 'ShiftRight': moveState.down = true; break
+        }
+    })
+
+    document.addEventListener('keyup', (e) =>
+    {
+        switch (e.code)
+        {
+            case 'KeyW': case 'ArrowUp':    moveState.forward = false; break
+            case 'KeyS': case 'ArrowDown':  moveState.backward = false; break
+            case 'KeyA': case 'ArrowLeft':  moveState.left = false; break
+            case 'KeyD': case 'ArrowRight': moveState.right = false; break
+            case 'Space':                   moveState.up = false; break
+            case 'ShiftLeft': case 'ShiftRight': moveState.down = false; break
+        }
+    })
+}
+else
+{
+    // ---- Mobile: Virtual joystick + touch look ----
+    instructions.innerHTML = '<p>Tap to explore</p><p><strong>Left stick</strong> to move &bull; <strong>Drag</strong> to look around</p>'
+
+    const joystickZone = document.getElementById('joystick-zone')
+    const joystickKnob = document.getElementById('joystick-knob')
+
+    // Tap instructions to begin
+    instructions.addEventListener('touchstart', (e) =>
+    {
+        e.preventDefault()
+        mobileActive = true
+        instructions.classList.add('hidden')
+        joystickZone.style.display = 'block'
+
+        // Init look direction from camera
+        camera.rotation.order = 'YXZ'
+        mobileLook.yaw = camera.rotation.y
+        mobileLook.pitch = camera.rotation.x
+    })
+
+    // -- Joystick touch --
+    let joystickTouchId = null
+    const joystickCenter = { x: 0, y: 0 }
+    const joystickMaxR = 35
+
+    joystickZone.addEventListener('touchstart', (e) =>
+    {
+        e.preventDefault()
+        e.stopPropagation()
+        const touch = e.changedTouches[0]
+        joystickTouchId = touch.identifier
+        const rect = joystickZone.getBoundingClientRect()
+        joystickCenter.x = rect.left + rect.width / 2
+        joystickCenter.y = rect.top + rect.height / 2
+    })
+
+    joystickZone.addEventListener('touchmove', (e) =>
+    {
+        e.preventDefault()
+        e.stopPropagation()
+        for (const touch of e.changedTouches)
+        {
+            if (touch.identifier === joystickTouchId)
+            {
+                let dx = touch.clientX - joystickCenter.x
+                let dy = touch.clientY - joystickCenter.y
+                const dist = Math.sqrt(dx * dx + dy * dy)
+                if (dist > joystickMaxR)
+                {
+                    dx = dx / dist * joystickMaxR
+                    dy = dy / dist * joystickMaxR
+                }
+                joystickKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`
+
+                const norm = Math.min(dist, joystickMaxR) / joystickMaxR
+                joystickDirX = (dx / joystickMaxR) * norm
+                joystickDirZ = (dy / joystickMaxR) * norm
+            }
+        }
+    })
+
+    const resetJoystick = (e) =>
+    {
+        for (const touch of e.changedTouches)
+        {
+            if (touch.identifier === joystickTouchId)
+            {
+                joystickTouchId = null
+                joystickKnob.style.transform = 'translate(-50%, -50%)'
+                joystickDirX = 0
+                joystickDirZ = 0
+            }
+        }
     }
-})
+    joystickZone.addEventListener('touchend', resetJoystick)
+    joystickZone.addEventListener('touchcancel', resetJoystick)
+
+    // -- Touch look (on canvas) --
+    let lookTouchId = null
+    let lastLookX = 0
+    let lastLookY = 0
+
+    canvas.addEventListener('touchstart', (e) =>
+    {
+        if (!mobileActive) return
+        for (const touch of e.changedTouches)
+        {
+            if (lookTouchId === null)
+            {
+                lookTouchId = touch.identifier
+                lastLookX = touch.clientX
+                lastLookY = touch.clientY
+            }
+        }
+    })
+
+    canvas.addEventListener('touchmove', (e) =>
+    {
+        e.preventDefault()
+        for (const touch of e.changedTouches)
+        {
+            if (touch.identifier === lookTouchId)
+            {
+                const dx = touch.clientX - lastLookX
+                const dy = touch.clientY - lastLookY
+                mobileLook.yaw -= dx * 0.004
+                mobileLook.pitch -= dy * 0.004
+                mobileLook.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, mobileLook.pitch))
+                lastLookX = touch.clientX
+                lastLookY = touch.clientY
+            }
+        }
+    }, { passive: false })
+
+    canvas.addEventListener('touchend', (e) =>
+    {
+        for (const touch of e.changedTouches)
+        {
+            if (touch.identifier === lookTouchId) lookTouchId = null
+        }
+    })
+
+    canvas.addEventListener('touchcancel', (e) =>
+    {
+        for (const touch of e.changedTouches)
+        {
+            if (touch.identifier === lookTouchId) lookTouchId = null
+        }
+    })
+}
 
 // ---------------------------------------------------------------------
 // Renderer
@@ -984,21 +1130,48 @@ const tick = () =>
     const deltaTime = elapsedTime - previousTime
     previousTime = elapsedTime
 
-    if (controls.isLocked)
+    const isActive = isMobile ? mobileActive : (controls && controls.isLocked)
+
+    if (isActive)
     {
         const speed = debugObject.flySpeed * deltaTime
 
-        velocity.set(0, 0, 0)
-        if (moveState.forward) velocity.z -= speed
-        if (moveState.backward) velocity.z += speed
-        if (moveState.left) velocity.x -= speed
-        if (moveState.right) velocity.x += speed
-        if (moveState.up) velocity.y += speed
-        if (moveState.down) velocity.y -= speed
+        if (isMobile)
+        {
+            // Apply touch look rotation
+            camera.rotation.order = 'YXZ'
+            camera.rotation.y = mobileLook.yaw
+            camera.rotation.x = mobileLook.pitch
 
-        controls.moveForward(-velocity.z)
-        controls.moveRight(velocity.x)
-        camera.position.y += velocity.y
+            // Move relative to camera direction (XZ plane)
+            if (Math.abs(joystickDirX) > 0.05 || Math.abs(joystickDirZ) > 0.05)
+            {
+                const forward = new THREE.Vector3()
+                camera.getWorldDirection(forward)
+                forward.y = 0
+                forward.normalize()
+
+                const right = new THREE.Vector3()
+                right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize()
+
+                camera.position.addScaledVector(forward, -joystickDirZ * speed)
+                camera.position.addScaledVector(right, joystickDirX * speed)
+            }
+        }
+        else
+        {
+            velocity.set(0, 0, 0)
+            if (moveState.forward) velocity.z -= speed
+            if (moveState.backward) velocity.z += speed
+            if (moveState.left) velocity.x -= speed
+            if (moveState.right) velocity.x += speed
+            if (moveState.up) velocity.y += speed
+            if (moveState.down) velocity.y -= speed
+
+            controls.moveForward(-velocity.z)
+            controls.moveRight(velocity.x)
+            camera.position.y += velocity.y
+        }
 
         // Clamp inside room
         const m = 0.3
